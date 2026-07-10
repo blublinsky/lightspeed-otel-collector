@@ -97,11 +97,11 @@ func (e *postgresExporter) consumeLogs(ctx context.Context, ld plog.Logs) error 
 					event = v.AsString()
 				}
 
-			body, err := json.Marshal(lr.Body().AsRaw())
-			if err != nil {
-				raw := lr.Body().AsString()
-				body, _ = json.Marshal(map[string]string{"raw": raw})
-			}
+				body, err := json.Marshal(lr.Body().AsRaw())
+				if err != nil {
+					raw := lr.Body().AsString()
+					body, _ = json.Marshal(map[string]string{"raw": raw})
+				}
 
 				args = append(args, traceID, ts, event, body)
 			}

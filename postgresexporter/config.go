@@ -26,7 +26,7 @@ type Config struct {
 	Schema           string `mapstructure:"schema"`
 	LogsTable        string `mapstructure:"logs_table"`
 
-	RetryConfig configretry.BackOffConfig                              `mapstructure:"retry_on_failure"`
+	RetryConfig configretry.BackOffConfig                                `mapstructure:"retry_on_failure"`
 	QueueConfig configoptional.Optional[exporterhelper.QueueBatchConfig] `mapstructure:"sending_queue"`
 }
 
