@@ -35,7 +35,7 @@ func newTestAdmin(t *testing.T) (*postgresAdmin, pgxmock.PgxPoolIface) {
 	return admin, mock
 }
 
-func TestHandleDeleteLogsMissingTraceID(t *testing.T) {
+func TestHandleDeleteLogsMissingAgenticRunID(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
@@ -60,11 +60,11 @@ func TestHandleDeleteLogsSuccess(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
-	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE trace_id = \$1`).
-		WithArgs("abc123def456abc123def456abc123de").
+	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE agentic_run_id = \$1`).
+		WithArgs("550e8400-e29b-41d4-a716-446655440000").
 		WillReturnResult(pgxmock.NewResult("DELETE", 5))
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?trace_id=abc123def456abc123def456abc123de", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?agentic_run_id=550e8400-e29b-41d4-a716-446655440000", nil)
 	w := httptest.NewRecorder()
 	admin.handleDeleteLogs(w, req)
 
@@ -79,8 +79,8 @@ func TestHandleDeleteLogsSuccess(t *testing.T) {
 	if resp.Deleted != 5 {
 		t.Errorf("expected 5 deleted, got %d", resp.Deleted)
 	}
-	if resp.TraceID != "abc123def456abc123def456abc123de" {
-		t.Errorf("expected trace_id in response, got %q", resp.TraceID)
+	if resp.AgenticRunID != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("expected agentic_run_id in response, got %q", resp.AgenticRunID)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -92,11 +92,11 @@ func TestHandleDeleteLogsZeroRows(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
-	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE trace_id = \$1`).
+	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE agentic_run_id = \$1`).
 		WithArgs("nonexistent").
 		WillReturnResult(pgxmock.NewResult("DELETE", 0))
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?trace_id=nonexistent", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?agentic_run_id=nonexistent", nil)
 	w := httptest.NewRecorder()
 	admin.handleDeleteLogs(w, req)
 
@@ -117,11 +117,11 @@ func TestHandleDeleteLogsDBError(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
-	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE trace_id = \$1`).
+	mock.ExpectExec(`DELETE FROM templogs\.logs WHERE agentic_run_id = \$1`).
 		WithArgs("abc123").
 		WillReturnError(context.DeadlineExceeded)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?trace_id=abc123", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/logs?agentic_run_id=abc123", nil)
 	w := httptest.NewRecorder()
 	admin.handleDeleteLogs(w, req)
 
@@ -130,7 +130,7 @@ func TestHandleDeleteLogsDBError(t *testing.T) {
 	}
 }
 
-func TestHandleGetLogsMissingTraceID(t *testing.T) {
+func TestHandleGetLogsMissingAgenticRunID(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
@@ -158,15 +158,15 @@ func TestHandleGetLogsSuccess(t *testing.T) {
 	ts1 := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	ts2 := time.Date(2026, 7, 9, 12, 0, 1, 0, time.UTC)
 
-	rows := pgxmock.NewRows([]string{"id", "timestamp", "event", "body"}).
-		AddRow(int64(1), ts1, "audit.agent.started", []byte(`{"msg":"hello"}`)).
-		AddRow(int64(2), ts2, "audit.agent.tool.call", []byte(`{"tool":"bash"}`))
+	rows := pgxmock.NewRows([]string{"id", "phase", "timestamp", "event", "body"}).
+		AddRow(int64(1), "planning", ts1, "audit.agent.started", []byte(`{"msg":"hello"}`)).
+		AddRow(int64(2), "planning", ts2, "audit.agent.tool.call", []byte(`{"tool":"bash"}`))
 
-	mock.ExpectQuery(`SELECT id, timestamp, event, body FROM templogs\.logs WHERE trace_id = \$1 AND id > \$2 ORDER BY id ASC LIMIT \$3`).
+	mock.ExpectQuery(`SELECT id, phase, timestamp, event, body FROM templogs\.logs WHERE agentic_run_id = \$1 AND id > \$2 ORDER BY id ASC LIMIT \$3`).
 		WithArgs("abc123", int64(0), 101).
 		WillReturnRows(rows)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?trace_id=abc123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?agentic_run_id=abc123", nil)
 	w := httptest.NewRecorder()
 	admin.handleGetLogs(w, req)
 
@@ -184,8 +184,48 @@ func TestHandleGetLogsSuccess(t *testing.T) {
 	if resp.HasMore {
 		t.Error("expected has_more=false with 2 records")
 	}
-	if resp.TraceID != "abc123" {
-		t.Errorf("expected trace_id=abc123, got %q", resp.TraceID)
+	if resp.AgenticRunID != "abc123" {
+		t.Errorf("expected agentic_run_id=abc123, got %q", resp.AgenticRunID)
+	}
+	if resp.Records[0].Phase != "planning" {
+		t.Errorf("expected phase=planning, got %q", resp.Records[0].Phase)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestHandleGetLogsWithPhaseFilter(t *testing.T) {
+	admin, mock := newTestAdmin(t)
+	defer mock.Close()
+
+	ts := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+
+	rows := pgxmock.NewRows([]string{"id", "phase", "timestamp", "event", "body"}).
+		AddRow(int64(5), "execution", ts, "audit.agent.tool.call", []byte(`{"tool":"bash"}`))
+
+	mock.ExpectQuery(`SELECT id, phase, timestamp, event, body FROM templogs\.logs WHERE agentic_run_id = \$1 AND phase = \$2 AND id > \$3 ORDER BY id ASC LIMIT \$4`).
+		WithArgs("run-1", "execution", int64(0), 101).
+		WillReturnRows(rows)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?agentic_run_id=run-1&phase=execution", nil)
+	w := httptest.NewRecorder()
+	admin.handleGetLogs(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp getResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Records) != 1 {
+		t.Errorf("expected 1 record, got %d", len(resp.Records))
+	}
+	if resp.Phase != "execution" {
+		t.Errorf("expected phase=execution in response, got %q", resp.Phase)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -199,16 +239,16 @@ func TestHandleGetLogsWithPagination(t *testing.T) {
 
 	ts := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 
-	rows := pgxmock.NewRows([]string{"id", "timestamp", "event", "body"}).
-		AddRow(int64(11), ts, "audit.agent.started", []byte(`{}`)).
-		AddRow(int64(12), ts, "audit.agent.text", []byte(`{}`)).
-		AddRow(int64(13), ts, "audit.agent.tool.call", []byte(`{}`))
+	rows := pgxmock.NewRows([]string{"id", "phase", "timestamp", "event", "body"}).
+		AddRow(int64(11), "planning", ts, "audit.agent.started", []byte(`{}`)).
+		AddRow(int64(12), "planning", ts, "audit.agent.text", []byte(`{}`)).
+		AddRow(int64(13), "planning", ts, "audit.agent.tool.call", []byte(`{}`))
 
-	mock.ExpectQuery(`SELECT id, timestamp, event, body FROM templogs\.logs WHERE trace_id = \$1 AND id > \$2 ORDER BY id ASC LIMIT \$3`).
+	mock.ExpectQuery(`SELECT id, phase, timestamp, event, body FROM templogs\.logs WHERE agentic_run_id = \$1 AND id > \$2 ORDER BY id ASC LIMIT \$3`).
 		WithArgs("trace1", int64(10), 3).
 		WillReturnRows(rows)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?trace_id=trace1&limit=2&after=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?agentic_run_id=trace1&limit=2&after=10", nil)
 	w := httptest.NewRecorder()
 	admin.handleGetLogs(w, req)
 
@@ -236,11 +276,11 @@ func TestHandleGetLogsDBError(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
-	mock.ExpectQuery(`SELECT id, timestamp, event, body FROM templogs\.logs`).
+	mock.ExpectQuery(`SELECT id, phase, timestamp, event, body FROM templogs\.logs`).
 		WithArgs("abc", int64(0), 101).
 		WillReturnError(context.DeadlineExceeded)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?trace_id=abc", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?agentic_run_id=abc", nil)
 	w := httptest.NewRecorder()
 	admin.handleGetLogs(w, req)
 
@@ -253,13 +293,13 @@ func TestHandleGetLogsLimitCapped(t *testing.T) {
 	admin, mock := newTestAdmin(t)
 	defer mock.Close()
 
-	rows := pgxmock.NewRows([]string{"id", "timestamp", "event", "body"})
+	rows := pgxmock.NewRows([]string{"id", "phase", "timestamp", "event", "body"})
 
-	mock.ExpectQuery(`SELECT id, timestamp, event, body FROM templogs\.logs`).
+	mock.ExpectQuery(`SELECT id, phase, timestamp, event, body FROM templogs\.logs`).
 		WithArgs("trace1", int64(0), 1001).
 		WillReturnRows(rows)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?trace_id=trace1&limit=9999", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/logs?agentic_run_id=trace1&limit=9999", nil)
 	w := httptest.NewRecorder()
 	admin.handleGetLogs(w, req)
 
@@ -287,7 +327,9 @@ func TestEnsureTableCreatesSchemaAndTable(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("CREATE SCHEMA", 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS "templogs"\."logs"`).
 		WillReturnResult(pgxmock.NewResult("CREATE TABLE", 0))
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_trace_id"`).
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_agentic_run_id"`).
+		WillReturnResult(pgxmock.NewResult("CREATE INDEX", 0))
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_run_phase"`).
 		WillReturnResult(pgxmock.NewResult("CREATE INDEX", 0))
 	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_timestamp"`).
 		WillReturnResult(pgxmock.NewResult("CREATE INDEX", 0))
@@ -338,7 +380,7 @@ func TestEnsureTableFailsOnIndexError(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("CREATE SCHEMA", 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS "templogs"\."logs"`).
 		WillReturnResult(pgxmock.NewResult("CREATE TABLE", 0))
-	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_trace_id"`).
+	mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_templogs_logs_agentic_run_id"`).
 		WillReturnError(fmt.Errorf("permission denied"))
 
 	err := admin.ensureTable(context.Background())

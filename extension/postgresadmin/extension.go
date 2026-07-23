@@ -127,20 +127,23 @@ func (p *postgresAdmin) ensureTable(ctx context.Context) error {
 
 	createTable := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id         BIGSERIAL PRIMARY KEY,
-			trace_id   TEXT NOT NULL,
-			timestamp  TIMESTAMPTZ NOT NULL,
-			event      TEXT NOT NULL,
-			body       JSONB
+			id              BIGSERIAL PRIMARY KEY,
+			agentic_run_id  TEXT NOT NULL,
+			phase           TEXT NOT NULL DEFAULT '',
+			timestamp       TIMESTAMPTZ NOT NULL,
+			event           TEXT NOT NULL,
+			body            JSONB
 		)`, safeTable)
 	if _, err := p.pool.Exec(ctx, createTable); err != nil {
 		return fmt.Errorf("create table %s: %w", safeTable, err)
 	}
 
-	safeIdxTraceID := pgx.Identifier{fmt.Sprintf("idx_%s_%s_trace_id", p.config.Schema, p.config.LogsTable)}.Sanitize()
+	safeIdxRunID := pgx.Identifier{fmt.Sprintf("idx_%s_%s_agentic_run_id", p.config.Schema, p.config.LogsTable)}.Sanitize()
+	safeIdxRunPhase := pgx.Identifier{fmt.Sprintf("idx_%s_%s_run_phase", p.config.Schema, p.config.LogsTable)}.Sanitize()
 	safeIdxTimestamp := pgx.Identifier{fmt.Sprintf("idx_%s_%s_timestamp", p.config.Schema, p.config.LogsTable)}.Sanitize()
 	indexes := []string{
-		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (trace_id)`, safeIdxTraceID, safeTable),
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (agentic_run_id)`, safeIdxRunID, safeTable),
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (agentic_run_id, phase)`, safeIdxRunPhase, safeTable),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s (timestamp)`, safeIdxTimestamp, safeTable),
 	}
 	for _, idx := range indexes {
@@ -153,7 +156,7 @@ func (p *postgresAdmin) ensureTable(ctx context.Context) error {
 	return nil
 }
 
-// --- GET /api/v1/logs?trace_id=<value>&limit=100&after=12345 ---
+// --- GET /api/v1/logs?agentic_run_id=<value>&phase=<phase>&limit=100&after=12345 ---
 
 func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -163,27 +166,30 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 type logRecord struct {
 	ID        int64           `json:"id"`
+	Phase     string          `json:"phase"`
 	Timestamp time.Time       `json:"timestamp"`
 	Event     string          `json:"event"`
 	Body      json.RawMessage `json:"body"`
 }
 
 type getResponse struct {
-	TraceID string      `json:"trace_id"`
-	Records []logRecord `json:"records"`
-	HasMore bool        `json:"has_more"`
-	Error   string      `json:"error,omitempty"`
+	AgenticRunID string      `json:"agentic_run_id"`
+	Phase        string      `json:"phase,omitempty"`
+	Records      []logRecord `json:"records"`
+	HasMore      bool        `json:"has_more"`
+	Error        string      `json:"error,omitempty"`
 }
 
 func (p *postgresAdmin) handleGetLogs(w http.ResponseWriter, r *http.Request) {
-	traceID := r.URL.Query().Get("trace_id")
+	agenticRunID := r.URL.Query().Get("agentic_run_id")
+	phase := r.URL.Query().Get("phase")
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if traceID == "" {
+	if agenticRunID == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, getResponse{
-			Error: "'trace_id' query parameter is required",
+			Error: "'agentic_run_id' query parameter is required",
 		})
 		return
 	}
@@ -217,21 +223,32 @@ func (p *postgresAdmin) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		after = parsed
 	}
 
-	query := fmt.Sprintf(
-		"SELECT id, timestamp, event, body FROM %s WHERE trace_id = $1 AND id > $2 ORDER BY id ASC LIMIT $3",
-		p.config.qualifiedTable(),
-	)
+	var query string
+	var args []interface{}
+	if phase != "" {
+		query = fmt.Sprintf(
+			"SELECT id, phase, timestamp, event, body FROM %s WHERE agentic_run_id = $1 AND phase = $2 AND id > $3 ORDER BY id ASC LIMIT $4",
+			p.config.qualifiedTable(),
+		)
+		args = []interface{}{agenticRunID, phase, after, limit + 1}
+	} else {
+		query = fmt.Sprintf(
+			"SELECT id, phase, timestamp, event, body FROM %s WHERE agentic_run_id = $1 AND id > $2 ORDER BY id ASC LIMIT $3",
+			p.config.qualifiedTable(),
+		)
+		args = []interface{}{agenticRunID, after, limit + 1}
+	}
 
-	rows, err := p.pool.Query(r.Context(), query, traceID, after, limit+1)
+	rows, err := p.pool.Query(r.Context(), query, args...)
 	if err != nil {
 		p.logger.Error("postgres_admin: query failed",
-			zap.String("trace_id", traceID),
+			zap.String("agentic_run_id", agenticRunID),
 			zap.Error(err),
 		)
 		w.WriteHeader(http.StatusInternalServerError)
 		writeJSON(w, getResponse{
-			Error:   "query failed; check collector logs",
-			TraceID: traceID,
+			Error:        "query failed; check collector logs",
+			AgenticRunID: agenticRunID,
 		})
 		return
 	}
@@ -241,12 +258,12 @@ func (p *postgresAdmin) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var rec logRecord
 		var body []byte
-		if err := rows.Scan(&rec.ID, &rec.Timestamp, &rec.Event, &body); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Phase, &rec.Timestamp, &rec.Event, &body); err != nil {
 			p.logger.Error("postgres_admin: row scan failed", zap.Error(err))
 			w.WriteHeader(http.StatusInternalServerError)
 			writeJSON(w, getResponse{
-				Error:   "failed to read results; check collector logs",
-				TraceID: traceID,
+				Error:        "failed to read results; check collector logs",
+				AgenticRunID: agenticRunID,
 			})
 			return
 		}
@@ -257,8 +274,8 @@ func (p *postgresAdmin) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 		p.logger.Error("postgres_admin: rows iteration failed", zap.Error(err))
 		w.WriteHeader(http.StatusInternalServerError)
 		writeJSON(w, getResponse{
-			Error:   "failed to read results; check collector logs",
-			TraceID: traceID,
+			Error:        "failed to read results; check collector logs",
+			AgenticRunID: agenticRunID,
 		})
 		return
 	}
@@ -270,45 +287,46 @@ func (p *postgresAdmin) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, getResponse{
-		TraceID: traceID,
-		Records: records,
-		HasMore: hasMore,
+		AgenticRunID: agenticRunID,
+		Phase:        phase,
+		Records:      records,
+		HasMore:      hasMore,
 	})
 }
 
-// --- DELETE /api/v1/logs?trace_id=<value> ---
+// --- DELETE /api/v1/logs?agentic_run_id=<value> ---
 
 type deleteResponse struct {
-	Deleted int64  `json:"deleted"`
-	TraceID string `json:"trace_id"`
-	Error   string `json:"error,omitempty"`
+	Deleted      int64  `json:"deleted"`
+	AgenticRunID string `json:"agentic_run_id"`
+	Error        string `json:"error,omitempty"`
 }
 
 func (p *postgresAdmin) handleDeleteLogs(w http.ResponseWriter, r *http.Request) {
-	traceID := r.URL.Query().Get("trace_id")
+	agenticRunID := r.URL.Query().Get("agentic_run_id")
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if traceID == "" {
+	if agenticRunID == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		writeJSON(w, deleteResponse{
-			Error: "'trace_id' query parameter is required",
+			Error: "'agentic_run_id' query parameter is required",
 		})
 		return
 	}
 
-	query := fmt.Sprintf("DELETE FROM %s WHERE trace_id = $1", p.config.qualifiedTable())
+	query := fmt.Sprintf("DELETE FROM %s WHERE agentic_run_id = $1", p.config.qualifiedTable())
 
-	ct, err := p.pool.Exec(r.Context(), query, traceID)
+	ct, err := p.pool.Exec(r.Context(), query, agenticRunID)
 	if err != nil {
 		p.logger.Error("postgres_admin: delete failed",
-			zap.String("trace_id", traceID),
+			zap.String("agentic_run_id", agenticRunID),
 			zap.Error(err),
 		)
 		w.WriteHeader(http.StatusInternalServerError)
 		writeJSON(w, deleteResponse{
-			Error:   "delete query failed; check collector logs",
-			TraceID: traceID,
+			Error:        "delete query failed; check collector logs",
+			AgenticRunID: agenticRunID,
 		})
 		return
 	}
@@ -316,13 +334,13 @@ func (p *postgresAdmin) handleDeleteLogs(w http.ResponseWriter, r *http.Request)
 	rowsAffected := ct.RowsAffected()
 
 	p.logger.Info("postgres_admin: deleted log records",
-		zap.String("trace_id", traceID),
+		zap.String("agentic_run_id", agenticRunID),
 		zap.Int64("deleted", rowsAffected),
 	)
 
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, deleteResponse{
-		Deleted: rowsAffected,
-		TraceID: traceID,
+		Deleted:      rowsAffected,
+		AgenticRunID: agenticRunID,
 	})
 }

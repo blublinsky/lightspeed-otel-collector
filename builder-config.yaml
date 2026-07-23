@@ -27,6 +27,10 @@ exporters:
   # Debug exporter — logs data to stdout, useful for development.
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.155.0
 
+  # Nop exporter — silently drops data. Used for pipelines that must exist
+  # (to avoid UNIMPLEMENTED gRPC errors) but have no backend.
+  - gomod: go.opentelemetry.io/collector/exporter/nopexporter v0.155.0
+
 receivers:
   # OTLP receiver — accepts telemetry from apps via gRPC and HTTP.
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.155.0

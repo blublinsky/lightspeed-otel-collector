@@ -14,12 +14,14 @@ Custom OpenTelemetry Collector for OpenShift Lightspeed. Built with the OpenTele
      - `otlpexporter` (standard) — forwards telemetry via gRPC
      - `otlphttpexporter` (standard) — forwards telemetry via HTTP
      - `debugexporter` (standard) — logs to stdout for development
+     - `nopexporter` (standard) — silently drops data (used for pipelines that must exist but have no backend)
    - **Processors:** `batchprocessor` — accumulates records before export
    - **Connectors:** `routingconnector` — routes telemetry to different pipelines based on OTTL conditions
    - **Extensions:**
      - `healthcheckextension` — HTTP health endpoint for Kubernetes probes
      - `filestorage` — persists sending queue to disk for durability across pod restarts
-     - `postgresadmin` (custom, this repo) — HTTP API for log retrieval and deletion by trace_id
+     - `postgresadmin` (custom, this repo) — HTTP API for log retrieval and deletion by agentic run ID
+     - `httpsmetrics` (custom, this repo) — reverse-proxies internal Prometheus metrics over HTTPS
 3. The resulting binary is a single statically-linked Go executable named `otelcol-lightspeed`.
 
 ### Configuration
@@ -40,7 +42,7 @@ Custom OpenTelemetry Collector for OpenShift Lightspeed. Built with the OpenTele
 9. The Collector listens on port 4317 (gRPC/TLS) and 4318 (HTTPS) for OTLP connections.
 10. The Collector connects to PostgreSQL using credentials injected via environment variable (`POSTGRES_CONNECTION_STRING`). The connection uses TLS (`sslmode=require`).
 11. A health check endpoint runs on port 13133.
-12. The admin API runs on port 8080 over HTTPS (GET/DELETE log records by trace_id).
+12. The admin API runs on port 8080 over HTTPS (GET/DELETE log records by agentic run ID).
 13. Cluster-facing Prometheus metrics are served on port 8888 over HTTPS via the `https_metrics` extension (reverse-proxies localhost-only stock telemetry pull).
 
 ### TLS
@@ -115,6 +117,7 @@ exporters:
     connection_string: "${env:POSTGRES_CONNECTION_STRING}"
     schema: templogs
     logs_table: logs
+  nop:
 
 extensions:
   health_check:
@@ -134,6 +137,11 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [postgres]
+    # Accept traces so the OTLP receiver doesn't return UNIMPLEMENTED.
+    # No trace backend configured — silently drop.
+    traces:
+      receivers: [otlp]
+      exporters: [nop]
 ```
 
 ### Routing mode (config-router.yaml)
