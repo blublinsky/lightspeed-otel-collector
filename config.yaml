@@ -75,6 +75,12 @@ service:
       processors: [batch]
       exporters: [postgres]
 
+    # Accept traces so the OTLP receiver doesn't return UNIMPLEMENTED.
+    # No trace backend configured in simple mode — silently drop.
+    traces:
+      receivers: [otlp]
+      exporters: [nop]
+
   telemetry:
     logs:
       level: info

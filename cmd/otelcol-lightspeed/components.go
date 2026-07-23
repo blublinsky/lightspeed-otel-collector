@@ -16,6 +16,7 @@ import (
 	otlpexporter "go.opentelemetry.io/collector/exporter/otlpexporter"
 	otlphttpexporter "go.opentelemetry.io/collector/exporter/otlphttpexporter"
 	debugexporter "go.opentelemetry.io/collector/exporter/debugexporter"
+	nopexporter "go.opentelemetry.io/collector/exporter/nopexporter"
 	healthcheckextension "github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension"
 	filestorage "github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage"
 	postgresadmin "github.com/openshift/lightspeed-otel-collector/extension/postgresadmin"
@@ -75,6 +76,7 @@ func components() (otelcol.Factories, error) {
 		otlpexporter.NewFactory(),
 		otlphttpexporter.NewFactory(),
 		debugexporter.NewFactory(),
+		nopexporter.NewFactory(),
 	)
 	if err != nil {
 		return otelcol.Factories{}, err
@@ -84,6 +86,7 @@ func components() (otelcol.Factories, error) {
 		otlpexporter.NewFactory().Type(): "go.opentelemetry.io/collector/exporter/otlpexporter v0.155.0",
 		otlphttpexporter.NewFactory().Type(): "go.opentelemetry.io/collector/exporter/otlphttpexporter v0.155.0",
 		debugexporter.NewFactory().Type(): "go.opentelemetry.io/collector/exporter/debugexporter v0.155.0",
+		nopexporter.NewFactory().Type(): "go.opentelemetry.io/collector/exporter/nopexporter v0.155.0",
 	})
 
 	factories.Processors, err = otelcol.MakeFactoryMap[processor.Factory](

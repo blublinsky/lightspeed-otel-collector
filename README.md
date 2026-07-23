@@ -70,28 +70,32 @@ make generate
 
 ## Log Record Schema
 
-The exporter writes a simplified 4-column schema optimised for audit log
-storage. Table creation is the operator's responsibility.
+The exporter writes a 5-column schema optimised for agentic run audit log
+storage. The `postgres_admin` extension creates the table automatically on
+startup (idempotent `CREATE TABLE IF NOT EXISTS`).
 
 ```sql
 CREATE TABLE templogs.logs (
-    id         BIGSERIAL PRIMARY KEY,
-    trace_id   TEXT NOT NULL,
-    timestamp  TIMESTAMPTZ NOT NULL,
-    event      TEXT NOT NULL,
-    body       JSONB
+    id              BIGSERIAL PRIMARY KEY,
+    agentic_run_id  TEXT NOT NULL,
+    phase           TEXT NOT NULL DEFAULT '',
+    timestamp       TIMESTAMPTZ NOT NULL,
+    event           TEXT NOT NULL,
+    body            JSONB
 );
 
-CREATE INDEX idx_logs_trace_id ON templogs.logs (trace_id);
+CREATE INDEX idx_logs_agentic_run_id ON templogs.logs (agentic_run_id);
+CREATE INDEX idx_logs_run_phase ON templogs.logs (agentic_run_id, phase);
 CREATE INDEX idx_logs_timestamp ON templogs.logs (timestamp);
 ```
 
-| Column    | Type        | Source                                          |
-|-----------|-------------|-------------------------------------------------|
-| trace_id  | TEXT        | Log record TraceID (32-char hex)                |
-| timestamp | TIMESTAMPTZ | TimeUnixNano → ObservedTimestamp → now          |
-| event     | TEXT        | Log record attribute `"event"`                  |
-| body      | JSONB       | Log record body (serialized)                    |
+| Column         | Type        | Source                                                     |
+|----------------|-------------|------------------------------------------------------------|
+| agentic_run_id | TEXT        | Log attribute `"agenticrun.uid"` — standard UUID (with hyphens, e.g. `550e8400-e29b-41d4-a716-446655440000`) |
+| phase          | TEXT        | Log attribute `"agenticrun.phase"` (e.g. `planning`, `execution`) |
+| timestamp      | TIMESTAMPTZ | TimeUnixNano → ObservedTimestamp → now                     |
+| event          | TEXT        | Log attribute `"event"`                                    |
+| body           | JSONB       | Log record body (serialized)                               |
 
 ## Configuration Reference
 
@@ -103,25 +107,30 @@ CREATE INDEX idx_logs_timestamp ON templogs.logs (timestamp);
 
 ### GET /api/v1/logs
 
-Retrieve log records for a trace with cursor-based pagination.
+Retrieve log records for an agentic run with cursor-based pagination.
 
 ```bash
-curl "https://localhost:8080/api/v1/logs?trace_id=abc123&limit=50&after=100"
+curl "https://localhost:8080/api/v1/logs?agentic_run_id=550e8400-e29b-41d4-a716-446655440000&limit=50&after=100"
+
+# Filter by phase:
+curl "https://localhost:8080/api/v1/logs?agentic_run_id=550e8400-e29b-41d4-a716-446655440000&phase=planning"
 ```
 
-| Parameter  | Required | Default | Description                        |
-|------------|----------|---------|------------------------------------|
-| `trace_id` | yes      | —       | Filter by trace ID                 |
-| `limit`    | no       | 100     | Max records to return (capped 1000)|
-| `after`    | no       | 0       | Cursor: return records with id > N |
+| Parameter       | Required | Default | Description                                  |
+|-----------------|----------|---------|----------------------------------------------|
+| `agentic_run_id`| yes      | —       | Agentic run ID (standard UUID with hyphens)  |
+| `phase`         | no       | —       | Filter by phase within the run               |
+| `limit`         | no       | 100     | Max records to return (capped at 1000)       |
+| `after`         | no       | 0       | Cursor: return records with id > N           |
 
 Response:
 ```json
 {
-  "trace_id": "abc123",
+  "agentic_run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "phase": "planning",
   "records": [
-    {"id": 1, "timestamp": "2026-07-09T12:00:00Z", "event": "audit.agent.started", "body": {"msg": "hello"}},
-    {"id": 2, "timestamp": "2026-07-09T12:00:01Z", "event": "audit.agent.tool.call", "body": {"tool": "bash"}}
+    {"id": 1, "phase": "planning", "timestamp": "2026-07-09T12:00:00Z", "event": "audit.agent.started", "body": {"msg": "hello"}},
+    {"id": 2, "phase": "planning", "timestamp": "2026-07-09T12:00:01Z", "event": "audit.agent.tool.call", "body": {"tool": "bash"}}
   ],
   "has_more": false
 }
@@ -129,15 +138,19 @@ Response:
 
 ### DELETE /api/v1/logs
 
-Delete all log records for a trace.
+Delete all log records for an agentic run (all phases).
 
 ```bash
-curl -X DELETE "https://localhost:8080/api/v1/logs?trace_id=abc123"
+curl -X DELETE "https://localhost:8080/api/v1/logs?agentic_run_id=550e8400-e29b-41d4-a716-446655440000"
 ```
+
+| Parameter       | Required | Description                                  |
+|-----------------|----------|----------------------------------------------|
+| `agentic_run_id`| yes      | Agentic run ID (standard UUID with hyphens)  |
 
 Response:
 ```json
-{"deleted": 42, "trace_id": "abc123"}
+{"deleted": 42, "agentic_run_id": "550e8400-e29b-41d4-a716-446655440000"}
 ```
 
 ## Container Build

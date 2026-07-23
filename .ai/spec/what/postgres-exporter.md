@@ -8,7 +8,8 @@ Custom OTel Collector exporter that writes OTLP log records to PostgreSQL.
 
 1. The exporter receives batches of OTLP log records from the Collector pipeline.
 2. For each log record, the exporter extracts:
-   - **`trace_id`** — from the log record's trace context (`TraceID` field, 32-char hex string).
+   - **`agentic_run_id`** — from log attribute `"agenticrun.uid"`. A standard UUID with hyphens (e.g. `550e8400-e29b-41d4-a716-446655440000`). Stored as-is.
+   - **`phase`** — from log attribute `"agenticrun.phase"` (e.g. `planning`, `execution`). Defaults to empty string if not set.
    - **`timestamp`** — from the log record's `TimeUnixNano` field, converted to `TIMESTAMPTZ`. Falls back to `ObservedTimestamp`, then current time.
    - **`event`** — from the log record's attributes (key: `event`). This is the event discriminator (e.g., `audit.agenticrun.received`, `audit.agent.tool.call`).
    - **`body`** — the log record's body, serialized as JSONB. If serialization fails, wrapped as `{"raw": "..."}`.
@@ -18,8 +19,8 @@ Custom OTel Collector exporter that writes OTLP log records to PostgreSQL.
 
 4. The exporter uses a single multi-value `INSERT` statement per batch for efficiency and atomicity:
    ```sql
-   INSERT INTO templogs.logs (trace_id, timestamp, event, body)
-   VALUES ($1,$2,$3,$4), ($5,$6,$7,$8), ...
+   INSERT INTO templogs.logs (agentic_run_id, phase, timestamp, event, body)
+   VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
    ```
 5. Batch size is bounded by what the Collector pipeline delivers per export call (controlled by the `batch` processor).
 6. A single `INSERT` statement is inherently atomic in PostgreSQL — if any value fails, the entire statement is rejected and the Collector retries per its retry policy.
@@ -77,15 +78,15 @@ postgresexporter/
 
 19. The insert statement uses parameterized queries to prevent SQL injection:
     ```sql
-    INSERT INTO {schema}.{table} (trace_id, timestamp, event, body)
-    VALUES ($1, $2, $3, $4), ($5, $6, $7, $8), ...
+    INSERT INTO {schema}.{table} (agentic_run_id, phase, timestamp, event, body)
+    VALUES ($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10), ...
     ```
 20. The schema and table names are validated at configuration time (alphanumeric + underscore only) and are not parameterizable — they are compiled into the SQL statement.
 
 ### Dependencies
 
 21. The exporter uses `pgx/v5` with `pgxpool` for PostgreSQL connectivity. `pgx` provides native connection pooling and batch support.
-22. No ORM or migration framework. The exporter writes to an existing table — schema creation is the lightspeed-operator's responsibility.
+22. No ORM or migration framework. The exporter writes to an existing table — the `postgres_admin` extension creates the schema, table, and indexes on startup using idempotent DDL (`CREATE ... IF NOT EXISTS`).
 23. Tests use `pgxmock/v5` for database interaction testing without a real PostgreSQL instance.
 
 ## Cross-References

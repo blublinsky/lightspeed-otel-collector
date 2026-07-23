@@ -56,10 +56,11 @@ func (e *postgresExporter) shutdown(_ context.Context) error {
 
 // consumeLogs is the hot path — called by the Collector for every batch of
 // logs that flows through the pipeline. Each batch is written in a single
-// transaction so either the entire batch is committed or none of it is.
+// multi-value INSERT so either the entire batch is committed or none of it is.
 //
 // Per log record, extracts:
-//   - trace_id: from the log record's TraceID field (32-char hex)
+//   - agentic_run_id: from log attribute "agenticrun.uid" (standard UUID with hyphens)
+//   - phase: from log attribute "agenticrun.phase"
 //   - timestamp: from TimeUnixNano (falls back to ObservedTimestamp, then now)
 //   - event: from log record attributes (key: "event")
 //   - body: log record body serialized as JSONB
@@ -73,14 +74,27 @@ func (e *postgresExporter) consumeLogs(ctx context.Context, ld plog.Logs) error 
 	insertStart := time.Now()
 
 	// Collect all row values into a flat args slice and build a multi-value
-	// INSERT: INSERT INTO t (cols) VALUES ($1,$2,$3,$4), ($5,$6,$7,$8), ...
-	args := make([]interface{}, 0, recordCount*4)
+	// INSERT: INSERT INTO t (cols) VALUES ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
+	// Records missing "agenticrun.uid" are skipped (unqueryable without a run ID).
+	args := make([]interface{}, 0, recordCount*5)
+	skipped := 0
 	for i := 0; i < ld.ResourceLogs().Len(); i++ {
 		rl := ld.ResourceLogs().At(i)
 		for j := 0; j < rl.ScopeLogs().Len(); j++ {
 			sl := rl.ScopeLogs().At(j)
 			for k := 0; k < sl.LogRecords().Len(); k++ {
 				lr := sl.LogRecords().At(k)
+
+				// "agenticrun.uid" follows OTel semantic convention (dotted namespace).
+				// Mapped to DB column "agentic_run_id".
+				agenticRunID := ""
+				if v, ok := lr.Attributes().Get("agenticrun.uid"); ok {
+					agenticRunID = v.AsString()
+				}
+				if agenticRunID == "" {
+					skipped++
+					continue
+				}
 
 				ts := lr.Timestamp().AsTime()
 				if ts.IsZero() {
@@ -90,7 +104,10 @@ func (e *postgresExporter) consumeLogs(ctx context.Context, ld plog.Logs) error 
 					ts = time.Now()
 				}
 
-				traceID := lr.TraceID().String()
+				phase := ""
+				if v, ok := lr.Attributes().Get("agenticrun.phase"); ok {
+					phase = v.AsString()
+				}
 
 				event := ""
 				if v, ok := lr.Attributes().Get("event"); ok {
@@ -103,20 +120,32 @@ func (e *postgresExporter) consumeLogs(ctx context.Context, ld plog.Logs) error 
 					body, _ = json.Marshal(map[string]string{"raw": raw})
 				}
 
-				args = append(args, traceID, ts, event, body)
+				args = append(args, agenticRunID, phase, ts, event, body)
 			}
 		}
 	}
 
-	// Build VALUES placeholders: ($1,$2,$3,$4), ($5,$6,$7,$8), ...
-	tuples := make([]string, 0, recordCount)
-	for i := 0; i < recordCount; i++ {
-		base := i*4 + 1
-		tuples = append(tuples, fmt.Sprintf("($%d,$%d,$%d,$%d)", base, base+1, base+2, base+3))
+	if skipped > 0 {
+		e.logger.Warn("skipped log records missing agenticrun.uid attribute",
+			zap.Int("skipped", skipped),
+			zap.Int("inserted", len(args)/5),
+		)
+	}
+
+	inserted := len(args) / 5
+	if inserted == 0 {
+		return nil
+	}
+
+	// Build VALUES placeholders: ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), ...
+	tuples := make([]string, 0, inserted)
+	for i := 0; i < inserted; i++ {
+		base := i*5 + 1
+		tuples = append(tuples, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)", base, base+1, base+2, base+3, base+4))
 	}
 
 	query := fmt.Sprintf(
-		"INSERT INTO %s (trace_id, timestamp, event, body) VALUES %s",
+		"INSERT INTO %s (agentic_run_id, phase, timestamp, event, body) VALUES %s",
 		e.config.qualifiedTable(),
 		strings.Join(tuples, ","),
 	)
