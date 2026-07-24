@@ -12,9 +12,9 @@ The Lightspeed OTel Collector is a custom OpenTelemetry Collector distribution t
 
 ### Deployment Modes
 
-4. **Spoke mode:** collects telemetry from local OLS components (service, agentic operator, sandbox, alerts adapter) and exports to the hub collector.
-5. **Hub mode:** receives telemetry from spoke collectors, aggregates fleet-wide data, and exports to the final backend (Prometheus, Jaeger, etc.).
-6. The deployment mode is determined by configuration, not by separate binaries.
+4. **Spoke mode:** collects telemetry from local OLS components (service, agentic operator, sandbox, alerts adapter) and exports to the hub collector. `[PLANNED]`
+5. **Hub mode:** receives telemetry from spoke collectors, aggregates fleet-wide data, and exports to the final backend (Prometheus, Jaeger, etc.). `[PLANNED]`
+6. The deployment mode is determined by configuration, not by separate binaries. `[PLANNED]`
 
 ### Signal Support
 
@@ -32,7 +32,7 @@ The Lightspeed OTel Collector is a custom OpenTelemetry Collector distribution t
 
 | Field/Flag | Type | Default | Description |
 |---|---|---|---|
-| Configuration follows standard OTel Collector YAML config — receivers, processors, exporters, pipelines. Specific fields TBD as the distribution is defined. ||||
+| Configuration follows standard OTel Collector YAML config — receivers, processors, exporters, pipelines. Configuration is documented per-component: see `what/collector.md` for collector configuration and `what/postgres-exporter.md` for the postgres exporter configuration. ||||
 
 ## Planned Changes
 
