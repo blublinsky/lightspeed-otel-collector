@@ -34,7 +34,7 @@ Custom OpenTelemetry Collector for OpenShift Lightspeed. Built with the OpenTele
 7. The routing configuration supports:
    - **Logs:** routed by `service.name` attribute — Lightspeed services → PostgreSQL, unmatched → dropped
    - **Traces:** all forwarded to a configurable tracing backend (`TRACES_BACKEND_ENDPOINT` env var)
-   - **Metrics:** no pipeline defined → silently dropped
+   - **Metrics:** no pipeline defined in routing mode → currently silently dropped. `[PLANNED]` Add a metrics pipeline or explicit no-op exporter with observable error metrics to comply with constraint 2.
 
 ### Deployment
 
@@ -56,6 +56,16 @@ All external communication channels use TLS:
 
 In OpenShift, the serving certificate is injected by `service-ca`.
 
+### Startup Order & PostgreSQL Dependency
+
+The OTel Collector starts extensions before pipelines. The `postgres_admin` extension bootstraps the database schema, table, and indexes on startup (`CREATE ... IF NOT EXISTS`). By the time the `postgresexporter` pipeline starts and receives its first batch, the table is guaranteed to exist. As a safety net, the exporter's `retry_on_failure` config retries with exponential backoff if an insert fails due to a missing table.
+
+**Hard dependency:** PostgreSQL must be reachable and the DB user must have `CREATE` privileges when the collector starts. The extension performs `Ping()` + `ensureTable()` during `Start()` — if either fails, the extension returns an error and the entire collector refuses to start (no pipelines, no receivers, no health check). This is intentional: if the table can't be guaranteed, accepting data that will fail on INSERT is worse than failing fast.
+
+**Implications for the operator:**
+- The operator's Deployment should set `initContainers` or readiness gates to ensure PostgreSQL is available before the collector pod starts.
+- If the DB user is read-only or lacks DDL privileges (`CREATE SCHEMA`, `CREATE TABLE`, `CREATE INDEX`), the collector will crash-loop. The `ensureTable` DDL requires a user with at least schema-owner privileges.
+- `IF NOT EXISTS` is idempotent — restarts are safe, but the DDL does not validate or migrate an existing table's column definitions. If the schema was previously created with different columns, the exporter's INSERT will fail at runtime.
 ### Health
 
 14. The Collector exposes the standard OTel Collector health check extension on port 13133 (`/`). The lightspeed-operator uses this for liveness and readiness probes.
@@ -89,6 +99,8 @@ In OpenShift, the serving certificate is injected by `service-ca`.
 | `.ai/spec/` | Specifications |
 
 ## Configuration Examples
+
+_(These are illustrative excerpts only. The canonical configuration is in the repository's `config.yaml` and `config-router.yaml` files, which are authoritative. The examples below may not reflect all current fields.)_
 
 ### Direct to PostgreSQL (config.yaml)
 

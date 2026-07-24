@@ -86,7 +86,7 @@ postgresexporter/
 ### Dependencies
 
 21. The exporter uses `pgx/v5` with `pgxpool` for PostgreSQL connectivity. `pgx` provides native connection pooling and batch support.
-22. No ORM or migration framework. The exporter writes to an existing table — the `postgres_admin` extension creates the schema, table, and indexes on startup using idempotent DDL (`CREATE ... IF NOT EXISTS`).
+22. The `postgres_admin` extension creates the schema, table, and indexes on first startup using `IF NOT EXISTS`. The exporter does not use an ORM or migration framework.
 23. Tests use `pgxmock/v5` for database interaction testing without a real PostgreSQL instance.
 
 ## Cross-References
