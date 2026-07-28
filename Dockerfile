@@ -38,7 +38,7 @@ COPY --from=builder /workspace/otelcol-lightspeed .
 RUN mkdir /licenses
 COPY LICENSE /licenses/.
 
-LABEL name="openshift-lightspeed/otelcol-lightspeed" \
+LABEL name="openshift-lightspeed/otelcol-lightspeed-rhel9" \
       summary="Custom OpenTelemetry Collector for OpenShift Lightspeed" \
       description="Receives OTLP telemetry and writes logs directly to PostgreSQL." \
       io.k8s.display-name="OTel Collector — Lightspeed" \
