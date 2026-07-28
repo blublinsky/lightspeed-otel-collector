@@ -34,7 +34,9 @@ Custom OpenTelemetry Collector for OpenShift Lightspeed. Built with the OpenTele
 7. The routing configuration supports:
    - **Logs:** routed by `service.name` attribute — Lightspeed services → PostgreSQL, unmatched → dropped
    - **Traces:** all forwarded to a configurable tracing backend (`TRACES_BACKEND_ENDPOINT` env var)
-   - **Metrics:** no pipeline defined in routing mode → currently silently dropped. `[PLANNED]` Add a metrics pipeline or explicit no-op exporter with observable error metrics to comply with constraint 2.
+   - **Metrics:** no pipeline defined in routing mode.
+     - _Current behavior_ `[KNOWN VIOLATION of Constraint 2]`: metrics are silently dropped with no log or observable signal.
+     - _Required behavior_: when no pipeline matches, the collector MUST log a warning and expose a metric counter for dropped spans/metrics — silent drops are prohibited (Constraint 2). `[PLANNED]` Add a metrics pipeline or explicit no-op exporter with observable error metrics.
 
 ### Deployment
 
@@ -211,4 +213,4 @@ service:
 ## Cross-References
 
 - `what/postgres-exporter.md` — Custom `postgresexporter` implementation details
-- `what/pipeline.md` — Pipeline architecture (hub/spoke for fleet observability — future scope)
+- `what/pipeline.md` — Pipeline architecture. `[PLANNED]` Hub/spoke for fleet observability is not yet implemented — see PLANNED sections in `pipeline.md`.
